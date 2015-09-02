@@ -11,8 +11,8 @@ xcb_atom_t *atoms;
 xcb_window_t root;
 std::vector<std::string> atomNames;
 
-//static const char *termcmd[] = { "/home/ludique/Desktop/MyWM/Examples/Events", NULL };
-static const char *termcmd[] = { "/home/ludique/Desktop/MyWM/Examples/Events", NULL };
+// static const char *termcmd[] = { "/home/ludique/Desktop/MyWM/Examples/Events", NULL };
+static const char *termcmd[] = { "gedit", NULL };
 typedef union{
 	const char** com;
 	const int i;	
@@ -28,10 +28,6 @@ int main()
 {
 	appCount = 0;
 	bool myExit = false;
-	/*Arg cmd = NULL;
-	cmd.com = {"xterm", NULL};
-	cmd.i = 1;*/
-	//std::cout << sizeof(long) << "   " << sizeof(long long) << std::endl;
 	int defaultScreen;
 	atoms = new xcb_atom_t [4];
 	c = xcb_connect(NULL, &defaultScreen );
@@ -72,22 +68,33 @@ int main()
 		{
 			switch(genEvent->response_type & ~0x80)
 			{
-				case XCB_CREATE_NOTIFY:
+				case XCB_MAP_REQUEST:
 					{
 						appCount++;							
-						xcb_create_notify_event_t *e = (xcb_create_notify_event_t *) genEvent;
-						uint32_t values[] = {e->width, e->height};
+						xcb_map_request_event_t *e = (xcb_map_request_event_t *) genEvent;
+				//		uint32_t values[] = {e->width, e->height};
 					//	uint32_t values2[] = {appCount * 550};
-						xcb_configure_window(c, e->window, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
+				//		xcb_configure_window(c, e->window, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
 						//xcb_configure_window(c, e->window, XCB_CONFIG_WINDOW_X, values2);
+						
+				//		uint32_t values2 = XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+				//		xcb_change_window_attributes(c, e->window, XCB_CW_EVENT_MASK, &values2);
 						
 						xcb_map_window(c, e->window);
 						xcb_flush(c);
-						std::cout << "wena chooooro wind id: "<< e->window << std::endl;
-						std::cout << "width: "<< e->width << std::endl;
-						std::cout << "height: "<< e->height << std::endl;
+					//	std::cout << "wena chooooro wind id: "<< e->window << std::endl;
+					//	std::cout << "width: "<< e->width << std::endl;
+					//	std::cout << "height: "<< e->height << std::endl;
 
 						break;
+					}
+				case XCB_EXPOSE:
+					{
+					/*	xcb_expose_event_t *e = (xcb_expose_event_t *) genEvent;
+						uint32_t values[] = {e->width, e->height};
+						xcb_configure_window(c, e->window, XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, values);
+						xcb_map_window(c, e->window);
+						xcb_flush(c);*/
 					}
 				case XCB_KEY_RELEASE:
 					{
@@ -116,7 +123,7 @@ void getAtoms()
 {
 	int count = atomNames.size();
 	xcb_intern_atom_cookie_t atomCookie[count];
-	xcb_intern_atom_reply_t *atomReply;
+	xcb_intern_atom_reply_t * atomReply;
 
 	for (unsigned int i = 0; i < count; i++)
 	{
