@@ -8,6 +8,10 @@
 #include <xcb/composite.h>
 #include <xcb/render.h>
 #include <xcb/xcb_renderutil.h>
+#include <FreeImage.h>
+#include <xcb/xfixes.h>
+#include <xcb/xcb_util.h>
+xcb_window_t geditWindow;
 
 xcb_connection_t *c;
 xcb_screen_t *screen;
@@ -15,6 +19,7 @@ xcb_atom_t *atoms;
 xcb_window_t root;
 std::vector<std::string> atomNames;
 unsigned int appCount;
+	xcb_render_picture_t picture;
 // static const char *termcmd[] = { "/home/ludique/Desktop/MyWM/Examples/Events", NULL };
 static const char *termcmd[] = { "gedit", NULL };
 typedef union{
@@ -22,6 +27,28 @@ typedef union{
 	const int i;	
 } Arg;
 
+xcb_render_picture_t bufferPicture;
+
+static xcb_render_pictvisual_t * xcb_render_util_find_visual_format2 (const xcb_render_query_pict_formats_reply_t *formats, const xcb_visualid_t visual);
+
+xcb_render_pictvisual_t *
+xcb_render_util_find_visual_format2 (const xcb_render_query_pict_formats_reply_t *formats,
+					       const xcb_visualid_t visual)
+{
+	    xcb_render_pictscreen_iterator_t screens;
+		    xcb_render_pictdepth_iterator_t depths;
+			    xcb_render_pictvisual_iterator_t visuals;
+				    if (!formats)
+							return 0;
+					    for (screens = xcb_render_query_pict_formats_screens_iterator(formats); screens.rem; xcb_render_pictscreen_next(&screens))
+								for (depths = xcb_render_pictscreen_depths_iterator(screens.data); depths.rem; xcb_render_pictdepth_next(&depths))
+										    for (visuals = xcb_render_pictdepth_visuals_iterator(depths.data); visuals.rem; xcb_render_pictvisual_next(&visuals))
+														if (visuals.data->visual == visual)
+																	    return visuals.data;
+						    return 0;
+}
+
+static void renderWindow(xcb_window_t window);
 static void createMenu(uint16_t xPos, uint16_t yPos);
 static void getAtoms();
 static void setup(int);
@@ -30,8 +57,44 @@ static void spawnProgram(const char**);
 static bool checkCompositeSystemSupport();
 int run();
 static bool checkIfWindowIsMenuOrica(xcb_connection_t *con, xcb_window_t win);
+static void SetWindowPixmap(xcb_window_t*);
 int main()
 {
+	FreeImage_Initialise();
+	FIBITMAP *bitmap = FreeImage_Allocate(320, 240, 24);
+	if (bitmap) {
+		unsigned char *bits = FreeImage_GetBits(bitmap);
+		    // bitmap successfully created!
+		std::cout << "sizeof: " <<sizeof(bits)<<std::endl;
+			for(int i=0;i<320;++i){
+				for(int j=0;j<240;++j){
+					 for (int c = 0; c < 3; c++) {
+					 	if (c == 0) bits[i * 240 * 3 + j * 3 + c] = 255;
+					 	else bits[i * 240 * 3 + j * 3 + c] = 0;
+					// bits[c] = 255;
+					// 
+					 }
+					// bits[0] = 255;
+					// bits[1] = 0;
+					// bits[2] = 0;
+
+					// bits[3] = 0;
+					// bits[4] = 255;
+					// bits[5] = 0;
+					// 
+					// bits[6] = 0;
+					// bits[7] = 0;
+					// bits[8] = 255;
+					// *(bits++)=j<255?j:255;
+					// *(bits++)=i;
+					// *bits=0;
+				}
+			}
+			if (FreeImage_Save(FIF_BMP, bitmap, "mybitmap.bmp", 0)) {
+				std::cout << "SALIO" << std::endl;
+			 }
+		     FreeImage_Unload(bitmap);
+			}
 	appCount = 0;
 	bool myExit = false;
 	int defaultScreen;
@@ -49,15 +112,25 @@ int main()
 	atomNames.push_back("_NET_WM_STATE");
 	atomNames.push_back("_NET_ACTIVE_WINDOW");								
 	
-	checkCompositeSystemSupport();
+/*	if(!checkCompositeSystemSupport())
+	{
+		delete screen;
+		xcb_disconnect(c);
+	}*/
 
 	getAtoms();
 	
 	setup(defaultScreen);
 	std::cout << "la zorra wmmm" << std::endl;
 
-	xcb_window_t window;
-	window = xcb_generate_id(c);
+	if(!checkCompositeSystemSupport())
+	{
+		delete screen;
+		xcb_disconnect(c);
+	}
+
+//	xcb_window_t window;
+//	window = xcb_generate_id(c);
 	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
 	uint32_t values[2];
 	values[0] = screen->white_pixel;
@@ -72,30 +145,72 @@ int main()
 //	callMenu(10, 0);
 //	std::cout << "despues sapwn" << std::endl;
 	xcb_generic_event_t *genEvent;
+	bool done = false;
 	while(!myExit)
 	{
-		if (genEvent = xcb_poll_for_event(c))
+		if (genEvent = xcb_wait_for_event(c))
 		{
 			switch(genEvent->response_type & ~0x80)
 			{
 				case XCB_MAP_REQUEST:
 					{
-					//	std::cout << "Map request" << std::endl;
+				//		std::cout << "Map request" << std::endl;
 					//	appCount++;							
 						xcb_map_request_event_t *e = (xcb_map_request_event_t *) genEvent;
-				
-					//	xcb_map_window(c, e->window);
-					//	xcb_flush(c);
+					//	renderWindow(e->window);
+					//	SetWindowPixmap(&e->window);	
+						xcb_map_window(c, e->window);
+						xcb_flush(c);
+					//	SetWindowPixmap(&e->window);
+					 	geditWindow = e->window;
 						
+						xcb_window_t overlyWin;
+						xcb_composite_get_overlay_window_reply_t * overlayReply = xcb_composite_get_overlay_window_reply(c, xcb_composite_get_overlay_window(c, root), NULL);
+
+						if(!overlayReply)
+							return 1;
+						std::cout << "overlay id " << overlayReply->overlay_win << " root id: " << root << std::endl;
+					/*	xcb_get_window_attributes_cookie_t attCookie = xcb_get_window_attributes(c, e->window);	
+						xcb_get_window_attributes_reply_t *attReply = xcb_get_window_attributes_reply(c, attCookie, NULL);
+						if (!attReply)
+						{
+							std::cout << "error de atributos" << std::endl;
+							break;
+						}
 						const uint32_t v = XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS;
 					
 						xcb_render_query_pict_formats_cookie_t cookieFormats = xcb_render_query_pict_formats(c);
 						xcb_render_query_pict_formats_reply_t *replyFormats = xcb_render_query_pict_formats_reply (c, cookieFormats, NULL);
 						
-						xcb_render_pictvisual_t *pv = xcb_render_util_find_visual_format( replyFormats, screen->root_visual);
+						xcb_render_pictvisual_t *pv = xcb_render_util_find_visual_format2( replyFormats, attReply->visual);
+						
+						std::cout << "pictVisual format " << pv->format << std::endl;
+						
 						xcb_render_picture_t rp = xcb_generate_id(c);
-						xcb_void_cookie_t cookie = xcb_render_create_picture_checked(c, rp, (xcb_drawable_t) e->window, pv->format, XCB_RENDER_CP_SUBWINDOW_MODE, &v);
+					    xcb_render_create_picture(c, rp, e->window, pv->format, XCB_RENDER_CP_REPEAT, &v);
+						
+						xcb_pixmap_t pixmap = xcb_generate_id(c);
+						xcb_create_pixmap(c, screen->root_depth, pixmap, screen->root, screen->width_in_pixels, screen->height_in_pixels);
+
+						xcb_render_picture_t destiny = xcb_generate_id(c);
+						xcb_render_create_picture(c, destiny, pixmap, pv->format, 0, NULL);
+							
+						xcb_render_picture_t rootPic = xcb_generate_id(c);
+						xcb_render_create_picture(c, rootPic, screen->root, pv->format, XCB_RENDER_CP_SUBWINDOW_MODE, &v);
+
+						xcb_render_composite(c, XCB_RENDER_PICT_OP_SRC, destiny, XCB_NONE, rootPic,0,0, 0, 0, 0, 0, screen->width_in_pixels, screen->height_in_pixels);						
+
+						xcb_free_pixmap(c, pixmap);
+
+						xcb_render_composite(c, XCB_RENDER_PICT_OP_SRC, rp, XCB_NONE, destiny, 0, 0, 0, 0, 0, 0, 500, 500);
+						std::cout << "map request" << std::endl;
+						xcb_flush(c);*/
 						break;
+					}
+				case XCB_COLORMAP_NOTIFY:
+					{
+						xcb_colormap_notify_event_t *e = (xcb_colormap_notify_event_t*) genEvent;
+						SetWindowPixmap(&e->window);
 					}
 				case XCB_EXPOSE:
 					{
@@ -110,8 +225,11 @@ int main()
 						xcb_button_press_event_t *e = (xcb_button_press_event_t *) genEvent;
 						if(e->detail == 3)
 						{
-							if (checkIfWindowIsMenuOrica(c, e->event))
+							if (!checkIfWindowIsMenuOrica(c, e->event))
 							{
+								std::cout << "Button Press" << std::endl;
+							//	xcb_unmap_window(c, geditWindow);
+								SetWindowPixmap(&geditWindow);
 								break;
 							}
 							createMenu(e->event_x, e->event_y);
@@ -158,6 +276,114 @@ int main()
 
 	return 0;
 }
+
+void renderWindow(xcb_window_t window)
+{
+	uint32_t mask = XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK;
+	uint32_t values[2];
+	values[0] = screen->white_pixel;
+	values[1] = XCB_EVENT_MASK_EXPOSURE;
+	
+	
+	//Pedimos los atributos de la ventana
+	xcb_get_window_attributes_cookie_t windowAtrributeCookie;
+	xcb_get_window_attributes_reply_t *windowAttributeReply;
+
+	windowAtrributeCookie = xcb_get_window_attributes(c, window);
+	windowAttributeReply = xcb_get_window_attributes_reply(c, windowAtrributeCookie, NULL);
+
+	if(!windowAttributeReply)
+	{
+		std::cout << "error carga de atributos" << std::endl;
+	}
+	
+	//obtenemos el formato (revisar por errores)
+	xcb_render_query_pict_formats_cookie_t windowFormatsCookie = xcb_render_query_pict_formats(c);
+	xcb_render_query_pict_formats_reply_t *windowFormatsReply = xcb_render_query_pict_formats_reply(c, windowFormatsCookie, NULL);
+
+	xcb_render_pictvisual_t *windowPictVisual = xcb_render_util_find_visual_format2(windowFormatsReply, windowAttributeReply->visual);
+
+	//creamos un render picture
+	const uint32_t value = XCB_SUBWINDOW_MODE_CLIP_BY_CHILDREN;
+	picture = xcb_generate_id(c);
+	xcb_render_create_picture(c, picture, window, windowPictVisual->format, XCB_RENDER_CP_SUBWINDOW_MODE, &value);
+
+//	create our destiny window
+	xcb_window_t myWindow = xcb_generate_id(c);
+    xcb_create_window(c, 0, myWindow, root,0, 0, 1500, 1500, 10, XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, mask, values);
+
+	//hacer render_picture donde se mostrara la ventana, y luego hacer el render_composit
+	xcb_pixmap_t pixmap = xcb_generate_id(c);
+	xcb_create_pixmap(c, screen->root_depth, pixmap, myWindow, screen->width_in_pixels, screen->height_in_pixels);
+	
+	xcb_render_query_pict_formats_reply_t *destinyFormats = xcb_render_query_pict_formats_reply(c, xcb_render_query_pict_formats(c), NULL);
+	xcb_render_pictvisual_t *destinyPictVisual = xcb_render_util_find_visual_format2(destinyFormats, screen->root_visual);
+
+	bufferPicture = xcb_generate_id(c);
+	xcb_render_create_picture(c, bufferPicture, myWindow, destinyPictVisual->format, 0, NULL);
+
+
+	//Shape handle
+	xcb_xfixes_region_t wRegion = xcb_generate_id(c);
+	xcb_xfixes_create_region_from_window(c, wRegion, window, XCB_SHAPE_SK_BOUNDING);
+  
+	xcb_get_geometry_reply_t *geometry = xcb_get_geometry_reply(c, xcb_get_geometry(c, window), NULL);
+ 
+	xcb_xfixes_translate_region(c, wRegion, geometry->x, geometry->y);	
+	xcb_xfixes_set_picture_clip_region(c, picture, wRegion, 0, 0);
+	xcb_xfixes_destroy_region(c, wRegion);
+
+	xcb_render_composite(c,XCB_RENDER_PICT_OP_OVER, picture, XCB_NONE, myWindow, 0, 0, 0, 0,100, 100, 500, 500 );
+//	std::cout << "asdada" << std::endl/
+	xcb_composite_redirect_window(c, window, XCB_COMPOSITE_REDIRECT_AUTOMATIC);
+		xcb_map_window(c, window);
+}
+
+void SetWindowPixmap(xcb_window_t* window)
+{
+//	xcb_map_window(c, *window);
+//	xcb_flush(c);
+//	xcb_aux_sync(c);
+	xcb_pixmap_t p = xcb_generate_id(c);
+	
+	xcb_composite_name_window_pixmap(c, *window, p);
+
+	xcb_unmap_window(c, *window);
+	xcb_get_image_reply_t* img = xcb_get_image_reply(c, xcb_get_image(c, XCB_IMAGE_FORMAT_Z_PIXMAP, p, 0, 0, 1300, 600, ~0), NULL);
+	
+	if(!img)
+	{
+		std::cout << "img error" << std::endl;
+		return;
+	}
+	uint8_t *data = xcb_get_image_data(img);
+	size_t l = xcb_get_image_data_length(img);
+	FIBITMAP *bitmap = FreeImage_Allocate(1300, 600, 32);
+	if (bitmap)
+	{
+		unsigned char *bits = FreeImage_GetBits(bitmap);
+		for(unsigned int i = 0; i < 600; i++ )
+		{
+			for(unsigned int j = 0; j < 1300; j++)
+			{
+				for (unsigned int c = 0; c < 4; c++)
+				{
+					*(bits++) = *(data++);
+				}
+			}
+		}
+	}
+	if (FreeImage_Save(FIF_BMP, bitmap, "mybitmap2.bmp", 0) )
+	{
+		                  std::cout << "SALIO" << std::endl;
+	}
+    FreeImage_Unload(bitmap);
+	               
+
+	free(img);
+//	xcb_flush(c);
+}
+
 bool checkCompositeSystemSupport()
 {  
    	xcb_generic_error_t *error;	
@@ -180,8 +406,10 @@ bool checkCompositeSystemSupport()
 		return false;
 	}
 	//si es compatible, redireccionamos las ventanas a la memoria offscreen
-	xcb_composite_redirect_subwindows(c, root, 0);
+	xcb_composite_redirect_subwindows(c, screen->root, XCB_COMPOSITE_REDIRECT_MANUAL);
 	std::cout << "min " <<  reply->minor_version << "max: " << reply->major_version <<  std::endl;
+	
+	
 	return true;
 }
 
@@ -291,8 +519,6 @@ void createMenu( uint16_t xPos, uint16_t yPos )
 		values[1] = XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_BUTTON_PRESS;
 
 		xcb_create_window(c, 0, w, wMenu, 2, (40 * i) + 5, 120, 30, 1, XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual, mask, values);
-		
-
 
 		xcb_map_window(c, w);
 	}
